@@ -1,0 +1,113 @@
+use sap;
+Go
+
+IF EXISTS (SELECT * FROM sys.objects WHERE type = 'P' AND name = 'GrossMarginReport')
+BEGIN
+DROP PROCEDURE GrossMarginReport; 
+END
+GO
+IF OBJECT_ID('tempdb..##pivotTable') IS NOT NULL 
+BEGIN
+DROP TABLE ##pivotTable
+END
+GO
+CREATE PROCEDURE GrossMarginReport
+@PostingStartDate NVARCHAR(MAX),
+@PostingEndDate NVARCHAR(MAX)
+AS
+BEGIN
+DECLARE @Columnnames NVARCHAR (MAX)=''
+DECLARE @SQL NVARCHAR(MAX) = ''
+SELECT @ColumnNames+=
+       + QUOTENAME(alternate_name) +',' FROM (SELECT DISTINCT alternate_name FROM 
+   (
+   SELECT 
+-- coep.objnr AS OBJNR
+--coep.KOKRS,coep.BELNR
+--SUM(WKGBTR) AS Amt
+ce.alternate_name
+FROM 
+COEP 
+
+JOIN Cost_elements AS ce 
+ON coep.KSTAR = ce.Cost_elements
+JOIN cobk 
+ON coep.BELNR = cobk.BELNR 
+WHERE 
+COBK.BUDAT BETWEEN CAST(@PostingStartDate AS DATE) AND CAST(@PostingEndDate AS DATE)
+
+   ) AS S
+   ) AS BP
+SET @Columnnames = LEFT(@Columnnames,len(@ColumnNames)-1)
+SET @SQL =
+'SELECT * into ##pivotTable
+FROM ( SELECT * FROM 
+(
+SELECT 
+coep.objnr AS OBJNR
+,(coep.BELNR)
+,max(coep.KOKRS) as KOKRS
+,SUM(WKGBTR) AS ddAmt
+,(ce.alternate_name) AS  alternate_name
+,max(cobk.budat) as Posting_Date
+FROM 
+COEP 
+
+JOIN Cost_elements AS ce 
+ON coep.KSTAR = ce.Cost_elements
+JOIN cobk 
+ON coep.BELNR = cobk.BELNR 
+WHERE 
+COBK.BUDAT BETWEEN '''+@PostingStartDate+''' AND '''+@PostingEndDate+'''
+group by coep.OBJNR,coep.BELNR,ce.alternate_name
+
+) SS
+) Pivot_data
+Pivot
+(
+SUM(ddAmt) 
+FOR alternate_name IN 
+(' +@Columnnames+')) AS Pivoting'
+--PRINT @SQL
+
+EXEC sp_executesql @SQL;
+
+WITH CTE_MainData AS
+(
+SELECT 
+au.OBJNR AS object_nbr,
+(cp.BELNR) AS belnr,
+max(pa.vorna) AS emp_first_name,
+max(pa.NACHN) AS emp_last_name,
+max(au.AUFNR) AS aufnr,
+max(au.BUKRS) AS compnay_code,
+max(au.USER0) AS customer_nbr,
+max(au.USER2) AS employee_nbr ,
+max(au.FUNC_AREA) AS biz_area,
+max(au.GSBER) AS biz_line,
+max(au.KDAUF) AS sales_order_nbr,
+max(ad.city) AS city,
+max(ad.region) AS region,
+max(ad.country) AS country
+FROM 
+AUFK AS au 
+
+INNER JOIN  PA0002 AS pa ON au.user2 = pa.PERNR
+INNER JOIN  KNA1   AS kn ON au.user0 = kn.KUNNR
+INNER JOIN  COEP   AS cp ON cp.OBJNR = au.OBJNR
+INNER JOIN  vbpa   AS vb ON vb.VBELN = au.KDAUF AND vb.PARVW='we'
+INNER JOIN  adrc   AS ad ON vb.ADRNR = ad.ADRNR
+
+group by au.OBJNR,cp.BELNR
+
+)
+SELECT 
+* 
+FROM 
+CTE_MainData 
+INNER JOIN 
+##pivotTable dt
+ON dt.OBJNR = CTE_MainData.object_nbr and CTE_MainData.BELNR = dt.BELNR
+--and dt.objnr='OR000400067390'
+-- and dt.BELNR = CTE_MainData.belnr
+END
